@@ -5,6 +5,15 @@ name: MLDebugger Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (Default: v<run_number>)'
+        required: false
+        default: ''
+      release_name:
+        description: 'Release name (Default: "Release v<run_number>")'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -21,21 +30,6 @@ jobs:
       with:
         clean: true
 
-    - name: Install uv
-      run: |
-        pip install uv
-        echo "Checking pip show:"
-        pip show uv
-        echo "Checking user base:"
-        python -m site --user-base
-        echo "Checking user bin directory:"
-        ls -la $(python -m site --user-base)/bin/ 2>/dev/null || echo "No user bin directory"
-        echo "Current PATH:"
-        echo $PATH
-        echo "Looking for uv executable:"
-        find /scratch -name "uv" 2>/dev/null || echo "uv not found in /scratch"
-        find $HOME -name "uv" 2>/dev/null || echo "uv not found in HOME"
-
     - name: Add uv to PATH
       run: echo "$(python -m site --user-base)/bin" >> $GITHUB_PATH
 
@@ -48,11 +42,6 @@ jobs:
       run: |
         uv venv
         source .venv/bin/activate
-
-    - name: Install dependencies
-      run: |
-        uv pip install flake8 pytest pylint
-        if [ -f requirements.txt ]; then uv pip install -r requirements.txt; fi
 
     - name: Lint with flake8, pylint
       run: |
@@ -83,21 +72,34 @@ jobs:
         WHEEL_PATH=$(find dist -name "*.whl" | head -1)
         uv pip install --system "$WHEEL_PATH"
 
+    - name: Resolve release tag and name
+      id: release_meta
+      shell: bash
+      run: |
+        DEFAULT_TAG="v${{ github.run_number }}"
+        DEFAULT_NAME="Release v${{ github.run_number }}"
+        TAG="${{ github.event.inputs.release_tag }}"
+        NAME="${{ github.event.inputs.release_name }}"
+        TAG="${TAG:-$DEFAULT_TAG}"
+        NAME="${NAME:-$DEFAULT_NAME}"
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "name=$NAME" >> $GITHUB_OUTPUT
+
     - name: Create Release
       id: create_release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: v${{ github.run_number }}
-        release_name: Release v${{ github.run_number }}
+        tag_name: ${{ steps.release_meta.outputs.tag }}
+        release_name: ${{ steps.release_meta.outputs.name }}
         draft: false
         prerelease: false
 
     - name: Upload Assets to Release
       run: |
         # Upload only the Wheel (DLL is already inside it)
-        gh release upload v${{ github.run_number }} \
+        gh release upload "${{ steps.release_meta.outputs.tag }}" \
           "${{ steps.wheel-path.outputs.wheel_path }}" \
           --clobber
       env:
@@ -106,8 +108,8 @@ jobs:
     - name: Delete old releases
       shell: bash
       run: |
-        # Get all releases, skip the first 10 (keep_latest), delete the rest
-        gh release list --limit 100 --json tagName --jq '.[10:][].tagName' | \
+        # Get all releases, skip the first 50 (keep_latest), delete the rest
+        gh release list --limit 200 --json tagName --jq '.[50:][].tagName' | \
         xargs -I {} gh release delete {} --yes
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
