@@ -60,7 +60,11 @@ class ClientDebug:
 
     try:
       self.design_info = LayerInfo(args)
-      self.state = DebugState(self.design_info.layers, self.design_info.overlay.get_stampcount())
+      self.state = DebugState(
+        self.design_info.layers,
+        self.design_info.overlay.get_stampcount(),
+        stamps_per_batch=self.design_info.overlay.get_stamps_per_batch(),
+      )
     except Exception as err:
       if debug_server:
         print("[INFO] closing debug server.")
@@ -82,9 +86,11 @@ class ClientDebug:
       self.impls.append(impl)
       self.aie_utls.append(
         AIEUtil(
-          args.aie_iface, impl, self.design_info.overlay.get_tiles(stamp_id=i), self.design_info.work_dir.globals[i]
+          args.aie_iface, impl, self.design_info.overlay.get_tiles(stamp_id=i), self.design_info.work_dir.stamp(i).globals
         )
       )
+
+    self._quiesce_inactive_stamps()
 
     self.impl = self.impls[0]
     self.status_handle = AIEStatus(
@@ -108,6 +114,17 @@ class ClientDebug:
       print("[ERROR] No layers with kernels found in the design. Exiting Now.")
       self.dumper.debug_server.close()
       sys.exit(0)
+
+  def _quiesce_inactive_stamps(self):
+    """
+    Clear debug-control registers on physical replicas excluded from the active
+    view so they run freely
+    """
+    inactive_tiles = self.design_info.overlay.get_inactive_tiles()
+    if not inactive_tiles:
+      return
+    self.aie_utls[0].initialize_stamp(inactive_tiles)
+    LOGGER.log("[INFO] Using single stamp control. Please use multistamp flag for more data.")
 
   # --- Batch mode delegation ---
 
@@ -291,10 +308,7 @@ class ClientDebug:
     For stamps with index > 1, initialize the stamp and continue execution.
     """
     self.impls[0].enable_pc_halt()
-    for sid, impl in enumerate(self.impls):
-      if sid > 0:
-        self.aie_utls[sid].initialize_stamp()
-        impl.continue_aie()
+    self._quiesce_inactive_stamps()
 
   def wreg_stamp(self, offset, val, sid=0):
     """
