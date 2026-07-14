@@ -92,6 +92,7 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     args.subgraph_name = None
 
   set_device(args)
+  set_aie_scc(args, subgraph_path)
 
   # Metadata check
   no_metadata = args.buffer_info is None or not os.path.exists(args.buffer_info)
@@ -132,6 +133,25 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     get_flag("multistamp"),
     get_flag("disable_tg"),
   )
+
+
+def set_aie_scc(args, subgraph_path):
+  """
+  Set AIE Single Core compiler
+  """
+  if args.peano:
+    return
+
+  compile_flags_path = subgraph_path + "/compile_flags.json"
+  if os.path.exists(compile_flags_path):
+    try:
+      with open(compile_flags_path, 'r', encoding='utf8') as f:
+        compile_flags = json.load(f)
+        if compile_flags.get("aie_single_core_compiler") == "peano":
+          args.peano = True
+          LOGGER.log("[INFO] Detected peano compiler.")
+    except (json.JSONDecodeError, IOError) as e:
+      LOGGER.log(f"[WARNING] Failed to parse compile_flags.json: {e}")
 
 
 def check_registry_keys(args, npu3=False) -> None:
